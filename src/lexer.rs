@@ -1,3 +1,6 @@
+use std::fmt::Display;
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
     // Single-character tokens.
     LeftParen,
@@ -44,12 +47,29 @@ pub enum TokenType {
     True,
     Var,
     While,
+
+    EOF,
 }
 
+impl Display for TokenType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Literal {
+    String(String),
+    Number(f64),
+    Bool(bool),
+    Nil,
+}
+
+#[derive(Clone)]
 pub struct Token {
     token_type: TokenType,
     lexeme: String,
-    literal: Option<String>,
+    literal: Option<Literal>,
     line: usize,
 }
 
@@ -57,7 +77,7 @@ impl Token {
     pub fn new(
         token_type: TokenType,
         lexeme: String,
-        literal: Option<String>,
+        literal: Option<Literal>,
         line: usize,
     ) -> Token {
         Token {
@@ -69,13 +89,23 @@ impl Token {
     }
 }
 
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "(Type: {} - Lexeme: {} - Literal: {:?} - Line: {})",
+            self.token_type, self.lexeme, self.literal, self.line
+        )
+    }
+}
+
 pub struct Lexer {
     source: Vec<u8>,
     line: usize,
     tokens: Vec<Token>,
     cursor: usize,
     start: usize,
-    stop: usize
+    has_error: bool,
 }
 
 impl Lexer {
@@ -86,130 +116,234 @@ impl Lexer {
             tokens: Vec::new(),
             cursor: 0,
             start: 0,
-            stop: 0,
+            has_error: false,
         }
     }
 
-    pub fn scan(&mut self) {
-        while !self.is_done() {
+    pub fn scan(&mut self) -> Vec<Token> {
+        loop {
             self.scan_token();
             self.advance();
+            if self.is_done() {
+                break;
+            }
         }
+        self.add_token(TokenType::EOF, None);
+        self.tokens.clone()
     }
 
     fn scan_token(&mut self) {
         let byte = self.source[self.cursor];
+        self.start = self.cursor;
         match byte {
-            b' ' => {},
-            b'\t' => {},
-            b'\r' => {},
-            b'\n' => { self.line += 1 },
+            b' ' => {}
+            b'\t' => {}
+            b'\r' => {}
+            b'\n' => self.line += 1,
 
-            b'(' => self.add_token(TokenType::LeftParen),
-            b')' => self.add_token(TokenType::RightParen),
-            b'[' => self.add_token(TokenType::LeftBrace),
-            b']' => self.add_token(TokenType::RightBrace),
-            b',' => self.add_token(TokenType::Comma),
-            b'.' => self.add_token(TokenType::Dot),
-            b'-' => self.add_token(TokenType::Minus),
-            b'+' => self.add_token(TokenType::Plus),
-            b';' => self.add_token(TokenType::Semicolon),
-            b'/' => self.add_token(TokenType::Slash),
-            b'*' => self.add_token(TokenType::Star),
+            b'(' => self.add_token(TokenType::LeftParen, None),
+            b')' => self.add_token(TokenType::RightParen, None),
+            b'{' => self.add_token(TokenType::LeftBrace, None),
+            b'}' => self.add_token(TokenType::RightBrace, None),
+            b',' => self.add_token(TokenType::Comma, None),
+            b'.' => self.add_token(TokenType::Dot, None),
+            b'-' => self.add_token(TokenType::Minus, None),
+            b'+' => self.add_token(TokenType::Plus, None),
+            b';' => self.add_token(TokenType::Semicolon, None),
+            b'/' => self.add_token(TokenType::Slash, None),
+            b'*' => self.add_token(TokenType::Star, None),
 
             b'!' => {
-                if self.peek() == b'=' {
+                if self.peek() == Some(b'=') {
                     self.advance();
-                    self.add_token(TokenType::BangEqual)
+                    self.add_token(TokenType::BangEqual, None)
                 } else {
-                    self.add_token(TokenType::Bang)
+                    self.add_token(TokenType::Bang, None)
                 }
             }
             b'=' => {
-                if self.peek() == b'=' {
+                if self.peek() == Some(b'=') {
                     self.advance();
-                    self.add_token(TokenType::EqualEqual)
+                    self.add_token(TokenType::EqualEqual, None)
                 } else {
-                    self.add_token(TokenType::Equal)
+                    self.add_token(TokenType::Equal, None)
                 }
             }
             b'<' => {
-
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    self.add_token(TokenType::LessEqual, None);
+                } else {
+                    self.add_token(TokenType::Less, None);
+                }
             }
             b'>' => {
-
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    self.add_token(TokenType::GreaterEqual, None);
+                } else {
+                    self.add_token(TokenType::Greater, None);
+                }
             }
             b'"' => {
-                self.seek(|char: u8| -> bool { char == b'"' }, TokenType::String);
+                self.string();
+                return;
             }
 
             _ => {
+                if self.is_numeric(byte) {
+                    self.number();
+                    return;
+                }
 
+                if self.is_alpha(byte) {
+                    self.identifier();
+                    return;
+                }
+
+                self.error("Unexpected character".to_string());
             }
         };
     }
 
     fn is_done(&self) -> bool {
-        self.cursor == self.source.len()
+        self.cursor >= self.source.len() - 1
     }
 
-    fn add_token(&mut self, token_type: TokenType) {
-        // TODO lexeme and literal?
-        self.tokens.push(Token::new(token_type, self.source[self.cursor].to_string(), None, self.line));
-    }
-
-    fn add_token_2(&mut self, token_type: TokenType) {
-        // TODO fix the range thing - and the literal thing
+    fn add_token(&mut self, token_type: TokenType, literal: Option<Literal>) {
+        assert!(self.start <= self.cursor);
         let bytes = self.source[self.start..self.cursor].to_vec();
         let lexeme = String::from_utf8(bytes).unwrap();
-        // Ew
-        self.tokens.push(Token::new(token_type, String::from(&lexeme), Some(lexeme), self.line));
+        self.tokens
+            .push(Token::new(token_type, lexeme, literal, self.line));
     }
 
     fn advance(&mut self) {
         self.cursor += 1;
     }
 
-    fn seek(&mut self, termination_condition: fn(u8) -> bool, token_type: TokenType) {
-        self.start = self.cursor;
+    fn string(&mut self) {
+        while let Some(c) = self.peek() {
+            self.advance();
+            if c == b'"' {
+                break;
+            }
+            if self.is_done() {
+                self.error("Unterminated String".to_string());
+            }
+        }
 
-        while termination_condition(self.peek()) {
+        let literal = Some(Literal::String(self.get_literal_string()));
+        self.add_token(TokenType::String, literal);
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.source.get(self.cursor + 1).copied()
+    }
+
+    fn search_reserved(&mut self) -> bool {
+        let literal = self.get_literal_string();
+
+        match literal.as_str() {
+            "and" => self.add_token(TokenType::And, None),
+            "class" => self.add_token(TokenType::Class, None),
+            "else" => self.add_token(TokenType::Else, None),
+            "false" => self.add_token(TokenType::False, Some(Literal::Bool(false))),
+            "fun" => self.add_token(TokenType::Fun, None),
+            "for" => self.add_token(TokenType::For, None),
+            "if" => self.add_token(TokenType::If, None),
+            "nil" => self.add_token(TokenType::Nil, Some(Literal::Nil)),
+            "or" => self.add_token(TokenType::Or, None),
+            "print" => self.add_token(TokenType::Print, None),
+            "return" => self.add_token(TokenType::Return, None),
+            "super" => self.add_token(TokenType::Super, None),
+            "this" => self.add_token(TokenType::This, None),
+            "true" => self.add_token(TokenType::True, Some(Literal::Bool(true))),
+            "var" => self.add_token(TokenType::Var, None),
+            "while" => self.add_token(TokenType::While, None),
+            _ => {
+                return false;
+            }
+        };
+        return true;
+    }
+
+    fn is_numeric(&self, byte: u8) -> bool {
+        // UTF-8 codes for 0 through 9
+        byte > 0x30 && byte < 0x39
+    }
+
+    fn number(&mut self) {
+        let mut decimal = false;
+        while let Some(c) = self.peek() {
+            if !self.is_numeric(c) {
+                break;
+            }
+            self.advance();
+
+            if c == b'.' {
+                decimal = true;
+                self.advance();
+                while let Some(c1) = self.peek() {
+                    if !self.is_numeric(c1) {
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+
+            if decimal {
+                break;
+            }
+        }
+
+        let str = String::from_utf8(self.source[self.start..self.cursor + 1].to_vec()).unwrap();
+
+        let literal = Some(Literal::Number(str.parse().unwrap()));
+        self.add_token(TokenType::Number, literal);
+    }
+
+    fn is_alpha(&mut self, byte: u8) -> bool {
+        (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+    }
+
+    fn identifier(&mut self) {
+        let mut valid_termination = true;
+
+        while let Some(c) = self.peek() {
+            if !(self.is_alpha(c) || self.is_numeric(c) || c == b'-' || c == b'_') {
+                break;
+            }
+            valid_termination = true;
+            if c == b'-' || c == b'_' {
+                valid_termination = false;
+            }
             self.advance();
         }
 
-        // TODO this is where we check for reserved words maybe?
+        if !valid_termination {
+            self.error("Invalid identifier termination".to_string());
+        }
 
-        self.add_token_2(token_type);
+        let reserved = self.search_reserved();
+        if reserved {
+            return;
+        }
+
+        self.add_token(TokenType::Identifier, None);
     }
 
-    fn peek(&self) -> u8 {
-        if self.source.len() >= self.cursor {
-            // TODO how do we handle this?
-            // I assume we need an error - since we're searching for something that doesn't exist
-            return b'a'
-        }
-        self.source[self.cursor + 1]
+    fn get_literal_string(&self) -> String {
+        String::from_utf8(self.source[self.start..self.cursor].to_vec()).unwrap()
     }
 
-    fn search_reserved(&self, identifier: String) -> Option<TokenType> {
-        match identifier.as_str() {
-            "and" => Some(TokenType::And),
-            "class" => Some(TokenType::Class),
-            "else" => Some(TokenType::Else),
-            "false" => Some(TokenType::False),
-            "fun" => Some(TokenType::Fun),
-            "for" => Some(TokenType::For),
-            "if" => Some(TokenType::If),
-            "nil" => Some(TokenType::Nil),
-            "or" => Some(TokenType::Or),
-            "print" => Some(TokenType::Print),
-            "return" => Some(TokenType::Return),
-            "super" => Some(TokenType::Super),
-            "this" => Some(TokenType::This),
-            "true" => Some(TokenType::True),
-            "var" => Some(TokenType::Var),
-            "while" => Some(TokenType::While),
-            _ => None
-        }
+    fn error(&mut self, message: String) {
+        self.has_error = true;
+        let where_is = self.get_literal_string();
+        println!("[line {}] Error {}: {}", self.line, where_is, message);
     }
 }
+
+#[cfg(test)]
+#[path = "../unittest/lexer_test.rs"]
+mod tests;
