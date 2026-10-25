@@ -16,8 +16,7 @@
           overlays = [ (import rust-overlay) ];
         };
         toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-      in {
-        devShells.default = pkgs.mkShell {
+        devShell = pkgs.mkShell {
           packages = [
             toolchain
             pkgs.cargo-nextest
@@ -28,5 +27,17 @@
           buildInputs = [ pkgs.openssl ];
           RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
         };
+      in {
+        devShells.default = devShell;
+
+        # GC-root target. nix-direnv only roots the dev shell's runtime
+        # closure, so the weekly nix-gc reaps the build-time deps (stdenv
+        # bootstrap, perl, m4, bison, bash patches) that `nix develop`
+        # needs on a cache miss -- which then needs the network. Rooting
+        # this keeps a cold `nix develop` working offline:
+        #
+        #   nix build .#devShellInputs \
+        #     --out-link ~/.local/state/nix/gcroots/rlox-devshell
+        packages.devShellInputs = devShell.inputDerivation;
       });
 }
