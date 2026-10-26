@@ -2,6 +2,8 @@ use std::fs;
 use std::env;
 
 mod lexer;
+mod ast;
+mod expr;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
