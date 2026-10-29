@@ -2,8 +2,7 @@ use std::fs;
 use std::env;
 
 mod lexer;
-mod ast;
-mod expr;
+mod parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -13,5 +12,6 @@ fn main() {
 
 fn run(source_file: &String) {
     let contents = fs::read_to_string(source_file).expect("Failed to read file");
-    lexer::Lexer::new(contents).scan();
+    let tokens = lexer::Lexer::new(contents).scan();
+    parser::Parser::new(tokens).parse();
 }
