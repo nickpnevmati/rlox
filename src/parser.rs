@@ -34,11 +34,6 @@ use crate::lexer::{
     TokenType::{self, *},
 };
 
-#[derive(Debug)]
-struct ParserError {
-    message: std::string::String,
-}
-
 pub enum Expr {
     Literal(Literal),
     Set {
@@ -115,12 +110,18 @@ pub struct Function {
 pub struct Block {
     pub statements: Vec<Stmt>,
 }
+
+#[derive(Debug)]
+struct ParserError {
+    message: std::string::String,
+}
+
 type ParseResult<T> = Result<T, ParserError>;
 
 pub struct Parser {
-    tokens: Vec<Token>,
-    errors: Vec<ParserError>,
-    current: usize,
+    pub tokens: Vec<Token>,
+    pub errors: Vec<ParserError>,
+    pub current: usize,
 }
 
 impl Parser {
@@ -132,13 +133,14 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) {
+    pub fn parse(&mut self) -> Vec<Stmt> {
         let mut statements: Vec<Stmt> = Vec::new();
         while !self.is_at_end() {
             statements.extend(self.declaration());
         }
 
         self.print_errors();
+        statements
     }
 
     fn print_errors(&self) {
@@ -165,7 +167,7 @@ impl Parser {
     }
 
     fn declaration_inner(&mut self) -> ParseResult<Stmt> {
-        if self.matches(&[Class, Fun, Var]) {
+        if self.matches(&[Class, Fun]) {
             return self.class_declaration();
         }
 
@@ -217,41 +219,18 @@ impl Parser {
     }
 
     fn variable_declaration(&mut self) -> ParseResult<Stmt> {
-        let name = match self.consume(Identifier, "Expected variable name") {
-            Ok(value) => value,
-            Err(err) => {
-                return Err(ParserError {
-                    message: err.message,
-                });
-            }
-        }
-        .clone();
+        let name = self.consume(Identifier, "Expected variable name")?.clone();
 
-        let mut expr: Option<ParseResult<Expr>> = None;
+        let mut expr: Option<Expr> = None;
         if self.matches(&[Equal]) {
-            expr = Some(self.expr());
+            expr = Some(self.expr()?);
         }
 
-        let initializer: Option<Expr> = match expr {
-            Some(e) => match e {
-                Ok(o) => Some(o),
-                Err(err) => {
-                    return Err(ParserError {
-                        message: err.message,
-                    });
-                }
-            },
-            None => None,
-        };
-
-        match self.consume(Semicolon, "Expected Semicolon at end of declaration") {
-            Ok(_) => {}
-            Err(e) => return Err(ParserError { message: e.message }),
-        };
+        self.consume(Semicolon, "Expected Semicolon at end of declaration")?;
 
         Ok(Stmt::Var {
             name: name,
-            initializer: initializer,
+            initializer: expr,
         })
     }
 
@@ -674,7 +653,7 @@ impl Parser {
     }
 
     fn advance(&mut self) -> &Token {
-        if self.is_at_end() {
+        if !self.is_at_end() {
             self.current += 1;
         }
         return self.previous();
@@ -713,5 +692,33 @@ impl Parser {
 
     fn is_at_end(&self) -> bool {
         return self.peek().token_type == EOF;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lexer;
+
+    use super::*;
+
+    fn parse(program: &str) -> Parser {
+        let tokens = lexer::Lexer::new(program.to_string()).scan();
+        Parser::new(tokens)
+    }
+
+    #[test]
+    fn parses_var_decl() {
+        let program = "var a = 1;";
+        let mut parser = parse(program);
+        parser.parse();
+        assert!(parser.errors.len() == 0)
+    }
+
+    #[test]
+    fn parser_parses_function() {
+        let program = "fun some_function() { var a = 1; var b = 2; return a + b; }";
+        let mut parser = parse(program);
+        parser.parse();
+        assert!(parser.errors.len() == 0)
     }
 }

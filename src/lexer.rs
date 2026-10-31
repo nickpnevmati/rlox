@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::lexer::TokenType::*;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
     // Single-character tokens.
@@ -53,13 +55,13 @@ pub enum TokenType {
 
 impl Display for TokenType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{:?}", self)
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Literal {
-    String(String),
+    String(std::string::String),
     Number(f64),
     Bool(bool),
     Nil,
@@ -68,7 +70,7 @@ pub enum Literal {
 #[derive(Clone, Debug)]
 pub struct Token {
     pub token_type: TokenType,
-    pub lexeme: String,
+    pub lexeme: std::string::String,
     pub literal: Option<Literal>,
     pub line: usize,
 }
@@ -76,7 +78,7 @@ pub struct Token {
 impl Token {
     pub fn new(
         token_type: TokenType,
-        lexeme: String,
+        lexeme: std::string::String,
         literal: Option<Literal>,
         line: usize,
     ) -> Token {
@@ -109,158 +111,128 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(source: String) -> Lexer {
+    pub fn new(source: std::string::String) -> Lexer {
         Lexer {
             source: source.as_bytes().to_vec(),
             line: 1,
             tokens: Vec::new(),
-            cursor: 0,
+            cursor: 1,
             start: 0,
             has_error: false,
         }
     }
 
     pub fn scan(&mut self) -> Vec<Token> {
-        loop {
+        while !self.is_done() {
             self.scan_token();
-            self.advance();
-            if self.is_done() {
-                break;
-            }
+            self.start = self.cursor;
+            self.cursor += 1;
         }
-        self.add_token(TokenType::EOF, None);
+        self.tokens.push(Token {
+            token_type: EOF,
+            lexeme: "".to_string(),
+            literal: None,
+            line: self.line,
+        });
         self.tokens.clone()
     }
 
     fn scan_token(&mut self) {
-        let byte = self.source[self.cursor];
-        self.start = self.cursor;
+        let byte = self.source[self.start];
         match byte {
             b' ' => {}
             b'\t' => {}
             b'\r' => {}
             b'\n' => self.line += 1,
 
-            b'(' => self.add_token(TokenType::LeftParen, None),
-            b')' => self.add_token(TokenType::RightParen, None),
-            b'{' => self.add_token(TokenType::LeftBrace, None),
-            b'}' => self.add_token(TokenType::RightBrace, None),
-            b',' => self.add_token(TokenType::Comma, None),
-            b'.' => self.add_token(TokenType::Dot, None),
-            b'-' => self.add_token(TokenType::Minus, None),
-            b'+' => self.add_token(TokenType::Plus, None),
-            b';' => self.add_token(TokenType::Semicolon, None),
-            b'/' => self.add_token(TokenType::Slash, None),
-            b'*' => self.add_token(TokenType::Star, None),
+            b'(' => self.add_token(LeftParen, None),
+            b')' => self.add_token(RightParen, None),
+            b'{' => self.add_token(LeftBrace, None),
+            b'}' => self.add_token(RightBrace, None),
+            b',' => self.add_token(Comma, None),
+            b'.' => self.add_token(Dot, None),
+            b'-' => self.add_token(Minus, None),
+            b'+' => self.add_token(Plus, None),
+            b';' => self.add_token(Semicolon, None),
+            b'/' => self.add_token(Slash, None),
+            b'*' => self.add_token(Star, None),
 
-            b'!' => {
-                if self.peek() == Some(b'=') {
-                    self.advance();
-                    self.add_token(TokenType::BangEqual, None)
-                } else {
-                    self.add_token(TokenType::Bang, None)
-                }
-            }
-            b'=' => {
-                if self.peek() == Some(b'=') {
-                    self.advance();
-                    self.add_token(TokenType::EqualEqual, None)
-                } else {
-                    self.add_token(TokenType::Equal, None)
-                }
-            }
-            b'<' => {
-                if self.peek() == Some(b'=') {
-                    self.advance();
-                    self.add_token(TokenType::LessEqual, None);
-                } else {
-                    self.add_token(TokenType::Less, None);
-                }
-            }
-            b'>' => {
-                if self.peek() == Some(b'=') {
-                    self.advance();
-                    self.add_token(TokenType::GreaterEqual, None);
-                } else {
-                    self.add_token(TokenType::Greater, None);
-                }
-            }
-            b'"' => {
-                self.string();
-                return;
-            }
-
+            b'!' => self.next_is_equal(BangEqual, Bang),
+            b'=' => self.next_is_equal(EqualEqual, Equal),
+            b'<' => self.next_is_equal(LessEqual, Less),
+            b'>' => self.next_is_equal(GreaterEqual, Greater),
+            b'"' => self.string(),
             _ => {
-                if self.is_numeric(byte) {
+                if is_numeric(byte) {
                     self.number();
-                    return;
-                }
-
-                if self.is_alpha(byte) {
+                } else if is_alpha(byte) {
                     self.identifier();
-                    return;
+                } else {
+                    self.error("Unexpected character".to_string());
                 }
-
-                self.error("Unexpected character".to_string());
             }
         };
     }
 
-    fn is_done(&self) -> bool {
-        self.cursor >= self.source.len() - 1
+    fn next_is_equal(&mut self, type1: TokenType, type2: TokenType) {
+        if self.peek() == Some(b'=') {
+            self.advance();
+            self.add_token(type1, None);
+        } else {
+            self.add_token(type2, None);
+        }
     }
 
     fn add_token(&mut self, token_type: TokenType, literal: Option<Literal>) {
-        assert!(self.start <= self.cursor);
-        let bytes = self.source[self.start..self.cursor].to_vec();
-        let lexeme = String::from_utf8(bytes).unwrap();
+        let lexeme = self.get_literal_string();
         self.tokens
             .push(Token::new(token_type, lexeme, literal, self.line));
+    }
+
+    fn string(&mut self) {
+        while self.peek().is_some_and(|c| c != b'"') {
+            self.advance();
+        }
+        self.advance();
+
+        let literal = Some(Literal::String(self.get_literal_string()));
+        self.add_token(String, literal);
+    }
+
+    fn is_done(&self) -> bool {
+        self.cursor > self.source.len()
     }
 
     fn advance(&mut self) {
         self.cursor += 1;
     }
 
-    fn string(&mut self) {
-        while let Some(c) = self.peek() {
-            self.advance();
-            if c == b'"' {
-                break;
-            }
-            if self.is_done() {
-                self.error("Unterminated String".to_string());
-            }
-        }
-
-        let literal = Some(Literal::String(self.get_literal_string()));
-        self.add_token(TokenType::String, literal);
-    }
-
     fn peek(&self) -> Option<u8> {
-        self.source.get(self.cursor + 1).copied()
+        self.source.get(self.cursor).copied()
     }
 
     fn search_reserved(&mut self) -> bool {
         let literal = self.get_literal_string();
 
+        println!("Literal:{literal}:");
+
         match literal.as_str() {
-            "and" => self.add_token(TokenType::And, None),
-            "class" => self.add_token(TokenType::Class, None),
-            "else" => self.add_token(TokenType::Else, None),
-            "false" => self.add_token(TokenType::False, Some(Literal::Bool(false))),
-            "fun" => self.add_token(TokenType::Fun, None),
-            "for" => self.add_token(TokenType::For, None),
-            "if" => self.add_token(TokenType::If, None),
-            "nil" => self.add_token(TokenType::Nil, Some(Literal::Nil)),
-            "or" => self.add_token(TokenType::Or, None),
-            "print" => self.add_token(TokenType::Print, None),
-            "return" => self.add_token(TokenType::Return, None),
-            "super" => self.add_token(TokenType::Super, None),
-            "this" => self.add_token(TokenType::This, None),
-            "true" => self.add_token(TokenType::True, Some(Literal::Bool(true))),
-            "var" => self.add_token(TokenType::Var, None),
-            "while" => self.add_token(TokenType::While, None),
+            "and" => self.add_token(And, None),
+            "class" => self.add_token(Class, None),
+            "else" => self.add_token(Else, None),
+            "false" => self.add_token(False, Some(Literal::Bool(false))),
+            "fun" => self.add_token(Fun, None),
+            "for" => self.add_token(For, None),
+            "if" => self.add_token(If, None),
+            "nil" => self.add_token(Nil, Some(Literal::Nil)),
+            "or" => self.add_token(Or, None),
+            "print" => self.add_token(Print, None),
+            "return" => self.add_token(Return, None),
+            "super" => self.add_token(Super, None),
+            "this" => self.add_token(This, None),
+            "true" => self.add_token(True, Some(Literal::Bool(true))),
+            "var" => self.add_token(Var, None),
+            "while" => self.add_token(While, None),
             _ => {
                 return false;
             }
@@ -268,85 +240,64 @@ impl Lexer {
         return true;
     }
 
-    fn is_numeric(&self, byte: u8) -> bool {
-        // UTF-8 codes for 0 through 9
-        byte > 0x30 && byte < 0x39
-    }
-
     fn number(&mut self) {
-        let mut decimal = false;
-        while let Some(c) = self.peek() {
-            if !self.is_numeric(c) {
-                break;
-            }
+        while self.peek().is_some_and(|n| is_numeric(n)) {
             self.advance();
-
-            if c == b'.' {
-                decimal = true;
-                self.advance();
-                while let Some(c1) = self.peek() {
-                    if !self.is_numeric(c1) {
-                        break;
-                    }
-                    self.advance();
-                }
-            }
-
-            if decimal {
-                break;
-            }
         }
 
-        let str = String::from_utf8(self.source[self.start..self.cursor + 1].to_vec()).unwrap();
+        let str = self.get_literal_string();
+        println!("{}", str);
 
         let literal = Some(Literal::Number(str.parse().unwrap()));
-        self.add_token(TokenType::Number, literal);
-    }
-
-    fn is_alpha(&mut self, byte: u8) -> bool {
-        (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+        self.add_token(Number, literal);
     }
 
     fn identifier(&mut self) {
         let mut valid_termination = true;
 
-        while let Some(c) = self.peek() {
-            if !(self.is_alpha(c) || self.is_numeric(c) || c == b'-' || c == b'_') {
-                break;
-            }
-            valid_termination = true;
-            if c == b'-' || c == b'_' {
-                valid_termination = false;
-            }
+        let is_valid_identifier =
+            |x| -> bool { is_alpha(x) || is_numeric(x) || x == b'-' || x == b'_' };
+
+        while let Some(c) = self.peek()
+            && is_valid_identifier(c)
+        {
             self.advance();
+            valid_termination = c != b'-' && c != b'_';
         }
 
         if !valid_termination {
             self.error("Invalid identifier termination".to_string());
         }
 
-        let reserved = self.search_reserved();
-        if reserved {
-            return;
+        if !self.search_reserved() {
+            self.add_token(Identifier, None);
         }
-
-        self.add_token(TokenType::Identifier, None);
     }
 
-    fn get_literal_string(&self) -> String {
-        String::from_utf8(self.source[self.start..self.cursor].to_vec()).unwrap()
+    fn get_literal_string(&self) -> std::string::String {
+        std::string::String::from_utf8(self.source[self.start..self.cursor].to_vec()).unwrap()
     }
 
-    fn error(&mut self, message: String) {
+    fn error(&mut self, message: std::string::String) {
         self.has_error = true;
         let where_is = self.get_literal_string();
         println!("[line {}] Error {}: {}", self.line, where_is, message);
     }
 }
 
+fn is_alpha(byte: u8) -> bool {
+    // ASCII codes for a-z or A-Z
+    (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+}
+
+fn is_numeric(byte: u8) -> bool {
+    // ASCII codes for 0 through 9
+    byte > 0x30 && byte < 0x39
+}
+
 #[cfg(test)]
-#[path = "../unittest/lexer_test.rs"]
 mod tests {
+
     use super::*;
     use std::fs;
     use walkdir::WalkDir;
@@ -360,46 +311,73 @@ mod tests {
     }
 
     #[test]
+    fn lexer_parses_symbol() {
+        let tokens = types(">");
+        assert!(matches!(tokens[0], Greater));
+    }
+
+    #[test]
     fn lexer_parses_number() {
         let tok_types = types("1");
-        assert!(matches!(tok_types[0], TokenType::Number));
+        let type0 = &tok_types[0];
+        println!("{type0}");
+        assert!(matches!(tok_types[0], Number));
+    }
+
+    #[test]
+    fn lexer_lexeme_is_correct() {
+        let tokens = lex("123");
+        let number = &tokens[0];
+        println!("{}", &number.lexeme);
+        assert!(number.lexeme == "123".to_string())
     }
 
     #[test]
     fn lexer_parses_string() {
         let tokens = types("\"this is @ str1ng_!@#^*(\"");
-        assert!(matches!(tokens[0], TokenType::String));
+        assert!(matches!(tokens[0], String));
     }
 
     #[test]
-    fn parses_identifier() {
+    fn lexer_parses_identifier() {
         let types = types("this_is_an_identifier");
-        assert!(matches!(types[0], TokenType::Identifier));
+        assert!(matches!(types[0], Identifier));
     }
 
     #[test]
-    fn parses_single_tokens() {
+    fn lexer_parses_var_decl() {
+        let line = lex("var a = 123;");
+        for tok in &line {
+            println!("{}", tok);
+        }
+        let expected: Vec<TokenType> = vec![Var, Identifier, Equal, Number, Semicolon];
+        let mut zipped = line.iter().zip(expected);
+        assert!(zipped.all(|x| x.0.token_type == x.1));
+    }
+
+    #[test]
+    fn lexer_parses_single_tokens() {
         let special_tokens = vec![
-            TokenType::LeftParen,
-            TokenType::RightParen,
-            TokenType::LeftBrace,
-            TokenType::RightBrace,
-            TokenType::Comma,
-            TokenType::Dot,
-            TokenType::Minus,
-            TokenType::Plus,
-            TokenType::Semicolon,
-            TokenType::Slash,
-            TokenType::Star,
-            TokenType::Bang,
-            TokenType::BangEqual,
-            TokenType::Equal,
-            TokenType::EqualEqual,
-            TokenType::Greater,
-            TokenType::GreaterEqual,
-            TokenType::Less,
-            TokenType::LessEqual,
-            TokenType::EOF,
+            LeftParen,
+            RightParen,
+            LeftBrace,
+            RightBrace,
+            Comma,
+            Dot,
+            Minus,
+            Plus,
+            Semicolon,
+            Slash,
+            Star,
+            Bang,
+            BangEqual,
+            Equal,
+            EqualEqual,
+            Greater,
+            GreaterEqual,
+            Less,
+            LessEqual,
+            EOF,
         ];
 
         let types = types("() {} , . - + ; / * ! != = == > >= < <=");
@@ -407,8 +385,30 @@ mod tests {
     }
 
     #[test]
-    fn no_files_have_errors() {
-        for entry in WalkDir::new("./test_cases") {
+    fn lexer_parses_function() {
+        let expected_tokens = vec![
+            Fun,
+            Identifier,
+            LeftParen,
+            RightParen,
+            LeftBrace,
+            Var,
+            Identifier,
+            Equal,
+            Number,
+            Semicolon,
+            RightBrace,
+            EOF
+        ];
+
+        let program = "fun some_function() { var a = 1; }";
+        let tokens = types(program);
+        assert_eq!(expected_tokens, tokens);
+    }
+
+    #[test]
+    fn lexer_no_files_have_errors() {
+        for entry in WalkDir::new("lox") {
             let entry = entry.unwrap();
             let filename = entry.file_name().to_str().unwrap();
             if filename.len() <= 3
