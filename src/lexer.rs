@@ -154,7 +154,13 @@ impl Lexer {
             b'-' => self.add_token(Minus, None),
             b'+' => self.add_token(Plus, None),
             b';' => self.add_token(Semicolon, None),
-            b'/' => self.add_token(Slash, None),
+            b'/' => {
+                if self.peek().is_some_and(|b| b == b'/') {
+                    self.comment();
+                } else {
+                    self.add_token(Slash, None)
+                }
+            }
             b'*' => self.add_token(Star, None),
 
             b'!' => self.next_is_equal(BangEqual, Bang),
@@ -189,9 +195,26 @@ impl Lexer {
             .push(Token::new(token_type, lexeme, literal, self.line));
     }
 
+    fn comment(&mut self) {
+        while !self.is_done() && !self.peek().is_some_and(|b| b == b'\n') {
+            self.advance();
+        }
+    }
+
     fn string(&mut self) {
         while self.peek().is_some_and(|c| c != b'"') {
             self.advance();
+        }
+
+        loop {
+            let c = self.peek();
+            if c.is_none() {
+                self.error("Unterminated String".to_string());
+                return;
+            }
+            if c.is_some_and(|b| b == b'"') {
+                break;
+            }
         }
         self.advance();
 
@@ -213,8 +236,6 @@ impl Lexer {
 
     fn search_reserved(&mut self) -> bool {
         let literal = self.get_literal_string();
-
-        println!("Literal:{literal}:");
 
         match literal.as_str() {
             "and" => self.add_token(And, None),
@@ -246,15 +267,12 @@ impl Lexer {
         }
 
         let str = self.get_literal_string();
-        println!("{}", str);
 
         let literal = Some(Literal::Number(str.parse().unwrap()));
         self.add_token(Number, literal);
     }
 
     fn identifier(&mut self) {
-        let mut valid_termination = true;
-
         let is_valid_identifier =
             |x| -> bool { is_alpha(x) || is_numeric(x) || x == b'-' || x == b'_' };
 
@@ -262,11 +280,6 @@ impl Lexer {
             && is_valid_identifier(c)
         {
             self.advance();
-            valid_termination = c != b'-' && c != b'_';
-        }
-
-        if !valid_termination {
-            self.error("Invalid identifier termination".to_string());
         }
 
         if !self.search_reserved() {
@@ -287,17 +300,16 @@ impl Lexer {
 
 fn is_alpha(byte: u8) -> bool {
     // ASCII codes for a-z or A-Z
-    (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+    (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A || byte == b'-' || byte == b'_')
 }
 
 fn is_numeric(byte: u8) -> bool {
     // ASCII codes for 0 through 9
-    byte > 0x30 && byte < 0x39
+    byte >= 0x30 && byte <= 0x39
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use std::fs;
     use walkdir::WalkDir;
@@ -387,18 +399,8 @@ mod tests {
     #[test]
     fn lexer_parses_function() {
         let expected_tokens = vec![
-            Fun,
-            Identifier,
-            LeftParen,
-            RightParen,
-            LeftBrace,
-            Var,
-            Identifier,
-            Equal,
-            Number,
-            Semicolon,
-            RightBrace,
-            EOF
+            Fun, Identifier, LeftParen, RightParen, LeftBrace, Var, Identifier, Equal, Number,
+            Semicolon, RightBrace, EOF,
         ];
 
         let program = "fun some_function() { var a = 1; }";
@@ -408,17 +410,20 @@ mod tests {
 
     #[test]
     fn lexer_no_files_have_errors() {
+        let exclude_files = vec!["unterminated.lox", "unexpected_character.lox"];
         for entry in WalkDir::new("lox") {
             let entry = entry.unwrap();
             let filename = entry.file_name().to_str().unwrap();
             if filename.len() <= 3
                 || filename[filename.len() - 3..filename.len()] != "lox".to_string()
+                || exclude_files.contains(&filename)
             {
                 continue;
             }
             println!("Lexing {}", filename);
             let source = fs::read_to_string(entry.path()).unwrap();
-            let lexer = Lexer::new(source);
+            let mut lexer = Lexer::new(source);
+            lexer.scan();
             assert!(!lexer.has_error);
         }
     }

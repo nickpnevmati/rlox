@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 /* Lox GRAMMAR (lowest to highest precedence)
 --------------------------------------------------------------
 program        → declaration* EOF
@@ -111,9 +113,16 @@ pub struct Block {
     pub statements: Vec<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ParserError {
     message: std::string::String,
+    token: Option<Token>,
+}
+
+impl Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} at {:?}", self.message, self.token)
+    }
 }
 
 type ParseResult<T> = Result<T, ParserError>;
@@ -122,6 +131,7 @@ pub struct Parser {
     pub tokens: Vec<Token>,
     pub errors: Vec<ParserError>,
     pub current: usize,
+    expr_start: usize,
 }
 
 impl Parser {
@@ -130,6 +140,7 @@ impl Parser {
             tokens: tokens,
             errors: Vec::new(),
             current: 0,
+            expr_start: 0,
         }
     }
 
@@ -145,12 +156,12 @@ impl Parser {
 
     fn print_errors(&self) {
         for err in &self.errors {
-            println!("{}", err.message);
+            println!("{}", err);
         }
     }
 
     fn synchronize(&mut self) {
-        while self.matches(&[Semicolon]) {
+        while !self.matches(&[Semicolon]) && !self.is_at_end() {
             self.advance();
         }
     }
@@ -167,7 +178,7 @@ impl Parser {
     }
 
     fn declaration_inner(&mut self) -> ParseResult<Stmt> {
-        if self.matches(&[Class, Fun]) {
+        if self.matches(&[Class]) {
             return self.class_declaration();
         }
 
@@ -185,7 +196,7 @@ impl Parser {
     fn class_declaration(&mut self) -> ParseResult<Stmt> {
         let name = match self.consume(Identifier, "Expected class name to be a valid identifier") {
             Ok(val) => val,
-            Err(e) => return Err(ParserError { message: e.message }),
+            Err(e) => return self.error(e.message),
         }
         .clone();
 
@@ -193,21 +204,21 @@ impl Parser {
         if self.matches(&[Less]) {
             match self.consume(Identifier, "Expected superclass name.") {
                 Ok(_) => {}
-                Err(e) => return Err(ParserError { message: e.message }),
+                Err(e) => return self.error(e.message),
             };
             superclass = Some(Expr::Variable(self.previous().clone()))
         }
 
         match self.consume(LeftBrace, "Expect '{' before class body") {
             Ok(_) => {}
-            Err(e) => return Err(ParserError { message: e.message }),
+            Err(e) => return self.error(e.message),
         }
 
         let mut methods: Vec<Stmt> = vec![];
-        while !self.check(RightBrace) && !self.is_at_end() {
+        while !self.matches(&[RightBrace]) {
             match self.function("method") {
                 Ok(m) => methods.push(m),
-                Err(e) => return Err(ParserError { message: e.message }),
+                Err(e) => return self.error(e.message),
             };
         }
 
@@ -244,13 +255,17 @@ impl Parser {
         }
 
         if self.matches(&[Print]) {
-            return Ok(Stmt::Print(self.expr()?));
+            let expr = self.expr()?;
+            self.consume(Semicolon, "Expected semicolon at end of print statement")?;
+            return Ok(Stmt::Print(expr));
         }
 
         if self.matches(&[Return]) {
+            let expr = self.expr()?;
+            self.consume(Semicolon, "Expected semicolon at end of return expression")?;
             return Ok(Stmt::Return {
                 keyword: self.peek().clone(),
-                value: self.expr()?,
+                value: expr,
             });
         }
 
@@ -368,12 +383,8 @@ impl Parser {
 
     fn expression_statement(&mut self) -> ParseResult<Stmt> {
         let expr = match self.expr() {
-            Ok(e) => e,
-            Err(er) => {
-                return Err(ParserError {
-                    message: er.message,
-                });
-            }
+            Ok(ex) => ex,
+            Err(e) => return self.error(e.message),
         };
 
         self.consume(Semicolon, "Expect semicolon at end of expression")?;
@@ -384,28 +395,22 @@ impl Parser {
         let name = match self.consume(Identifier, "") {
             Ok(n) => n,
             Err(_) => {
-                return Err(ParserError {
-                    message: format!("Expect valid identifier as {} name", kind),
-                });
+                return self.error(format!("Expect open parent after {} name", kind));
             }
         }
         .clone();
 
         if self.consume(LeftParen, "").is_err() {
-            return Err(ParserError {
-                message: format!("Expect open parent after {} name", kind),
-            });
+            return self.error(format!("Expect open paren after {} name", kind));
         }
 
         let params = match self.parameters() {
             Ok(p) => p,
-            Err(e) => return Err(ParserError { message: e.message }),
+            Err(e) => return self.error(e.message),
         };
 
-        if self.consume(LeftParen, "").is_err() {
-            return Err(ParserError {
-                message: format!("Expect close parent after {} name", kind),
-            });
+        if self.consume(LeftBrace, "").is_err() {
+            return self.error(format!("Expected block after {} declaration", kind));
         }
 
         let block = match self.block() {
@@ -422,16 +427,20 @@ impl Parser {
 
     fn parameters(&mut self) -> ParseResult<Vec<Token>> {
         let mut parameters: Vec<Token> = vec![];
-        while self.peek().token_type == RightParen {
+        while !self.matches(&[RightParen]) {
             let param = self.consume(Identifier, "Expected identifier as function parameter");
             match param {
                 Ok(p) => parameters.push(p.clone()),
-                Err(e) => return Err(ParserError { message: e.message }),
+                Err(e) => return self.error(e.message),
+            }
+
+            if self.matches(&[RightParen]) {
+                break;
             }
 
             match self.consume(Comma, "Expected ',' after parameter") {
                 Ok(_) => {}
-                Err(e) => return Err(ParserError { message: e.message }),
+                Err(e) => return self.error(e.message),
             }
         }
 
@@ -441,18 +450,33 @@ impl Parser {
     fn block(&mut self) -> ParseResult<Vec<Stmt>> {
         let mut stmts: Vec<Stmt> = vec![];
 
-        while self.peek().token_type != RightBrace {
-            let expr = self.expression_statement();
+        while !self.matches(&[RightBrace]) {
+            let expr = self.declaration_inner();
             match expr {
                 Ok(ex) => stmts.push(ex),
-                Err(e) => return Err(ParserError { message: e.message }),
+                Err(e) => {
+                    self.errors.push(ParserError {
+                        message: e.message,
+                        token: e.token,
+                    });
+                    self.synchronize();
+                }
             }
         }
         Ok(stmts)
     }
 
     fn expr(&mut self) -> ParseResult<Expr> {
-        self.assignment()
+        self.expr_start = self.current;
+        match self.assignment() {
+            Ok(assign) => Ok(assign),
+            Err(e) => {
+                let mut new_error = e.clone();
+                new_error.message =
+                    format!("{} + {}", e.message.clone(), self.gather_lexemes().clone());
+                Err(new_error)
+            }
+        }
     }
 
     fn assignment(&mut self) -> ParseResult<Expr> {
@@ -477,11 +501,7 @@ impl Parser {
                         value: Box::new(value),
                     });
                 }
-                _ => {
-                    return Err(ParserError {
-                        message: "Invalid assignment".to_string(),
-                    });
-                }
+                _ => return self.error("Invalid assignment".to_string()),
             }
         }
 
@@ -517,17 +537,17 @@ impl Parser {
         next: fn(&mut Self) -> ParseResult<Expr>,
         tok_types: &[TokenType],
     ) -> ParseResult<Expr> {
-        let mut expr = next(self)?;
+        let mut expr = next(self);
         while self.matches(tok_types) {
             let operator = self.previous().clone();
             let right = next(self)?;
-            expr = Expr::Binary {
-                left: Box::new(expr),
+            expr = Ok(Expr::Binary {
+                left: Box::new(expr?),
                 operator,
                 right: Box::new(right),
-            }
+            });
         }
-        Ok(expr)
+        expr
     }
 
     fn unary(&mut self) -> ParseResult<Expr> {
@@ -544,24 +564,24 @@ impl Parser {
     }
 
     fn call(&mut self) -> ParseResult<Expr> {
-        let mut expr = self.primary()?;
+        let mut expr = self.primary();
 
         loop {
             if self.matches(&[LeftParen]) {
-                expr = self.finish_call(expr)?;
+                expr = self.finish_call(expr?);
             } else if self.matches(&[Dot]) {
                 let name: Token = self
                     .consume(Identifier, "Expect property name after '.'.")?
                     .clone();
-                expr = Expr::Get {
-                    object: Box::new(expr),
+                expr = Ok(Expr::Get {
+                    object: Box::new(expr?),
                     name: name,
-                };
+                });
             } else {
                 break;
             }
         }
-        Ok(expr)
+        expr
     }
 
     fn finish_call(&mut self, callee: Expr) -> ParseResult<Expr> {
@@ -571,11 +591,13 @@ impl Parser {
                 if arguments.len() >= 255 {
                     self.errors.push(ParserError {
                         message: "Can't have more than 255 arguments".to_string(),
+                        token: None,
                     });
                 }
+
                 arguments.push(self.expr()?);
 
-                if self.matches(&[Comma]) {
+                if !self.matches(&[Comma]) {
                     break;
                 }
             }
@@ -606,9 +628,7 @@ impl Parser {
             let literal = match self.previous().clone().literal {
                 Some(l) => l,
                 None => {
-                    return Err(ParserError {
-                        message: "Expect literal".to_string(),
-                    });
+                    return self.error("Expected literal".to_string());
                 }
             };
             return Ok(Expr::Literal(literal));
@@ -636,9 +656,7 @@ impl Parser {
             return Ok(Expr::Grouping(Box::new(expr)));
         }
 
-        Err(ParserError {
-            message: "Expected expression".to_string(),
-        })
+        self.error("Expected expression".to_string())
     }
 
     // Utility Functions
@@ -685,13 +703,25 @@ impl Parser {
             return Ok(self.advance());
         }
 
-        Err(ParserError {
-            message: message.to_string(),
-        })
+        self.error(message.to_string())
     }
 
     fn is_at_end(&self) -> bool {
         return self.peek().token_type == EOF;
+    }
+
+    fn error<T>(&self, message: std::string::String) -> ParseResult<T> {
+        Err(ParserError {
+            message: message,
+            token: Some(self.tokens[self.current].clone()),
+        })
+    }
+
+    fn gather_lexemes(&self) -> std::string::String {
+        self.tokens[self.expr_start..self.current + 1]
+            .iter()
+            .map(|t| t.lexeme.as_str())
+            .collect()
     }
 }
 
@@ -700,6 +730,8 @@ mod tests {
     use crate::lexer;
 
     use super::*;
+    use std::fs;
+    use walkdir::WalkDir;
 
     fn parse(program: &str) -> Parser {
         let tokens = lexer::Lexer::new(program.to_string()).scan();
@@ -720,5 +752,30 @@ mod tests {
         let mut parser = parse(program);
         parser.parse();
         assert!(parser.errors.len() == 0)
+    }
+
+    #[test]
+    fn parser_parses_class() {
+        let program = "class A { method(arg) { print\"A.method(\" + arg + \")\"; }}";
+        let mut parser = parse(program);
+        parser.parse();
+        assert!(parser.errors.len() == 0)
+    }
+
+    #[test]
+    fn parser_parses_everything() {
+        for entry in WalkDir::new("lox") {
+            let entry = entry.unwrap();
+            let filename = entry.file_name().to_str().unwrap();
+            if filename.len() <= 3
+                || filename[filename.len() - 3..filename.len()] != "lox".to_string()
+            {
+                continue;
+            }
+            println!("Parsing {}", filename);
+            let source = fs::read_to_string(entry.path()).unwrap();
+            let result = parse(source.as_str());
+            assert!(result.errors.len() == 0);
+        }
     }
 }

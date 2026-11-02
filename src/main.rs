@@ -11,13 +11,11 @@ fn main() {
     match args.len() {
         1 => run_cmd(),
         2 => {
-            let file_path = &args[0];
+            let file_path = &args[1];
             run(file_path);
         }
         _ => panic!("Invalid arguments"),
     }
-    let file_path = &args[0];
-    run(file_path);
 }
 
 fn run_cmd() {
