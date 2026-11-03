@@ -3,8 +3,12 @@ use std::fs;
 use std::io;
 use std::io::prelude::*;
 
+mod ast;
 mod lexer;
 mod parser;
+mod token;
+mod interpreter;
+mod utils;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
