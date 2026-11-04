@@ -1,27 +1,70 @@
-use crate::{ast::Expr, token::Token, token::TokenType};
+use crate::{
+    ast::{Block, Expr, Stmt},
+    environment::*,
+    token::{Token, TokenType},
+};
 
 #[derive(Clone, Debug)]
-pub enum Value {
-    Nil,
-    Bool(bool),
-    Number(f64),
-    String(std::string::String),
+pub struct RuntimeError {}
+
+pub struct Interpreter {
+    env: Environments,
+    current_scope: EnvId,
 }
 
-impl Value {
-    fn as_number(&self) -> Result<f64, RuntimeError> {
-        match self {
-            Value::Number(n) => Ok(*n),
-            _ => Err(RuntimeError {}),
+impl Interpreter {
+    pub fn new() -> Interpreter {
+        Interpreter {
+            env: Environments::new(),
+            current_scope: EnvId(0),
         }
     }
-}
+    pub fn evaluate_stmt(&mut self, stmt: Stmt) -> Result<(), RuntimeError> {
+        match stmt {
+            Stmt::Expression(expr) => todo!(),
+            Stmt::Function(function) => todo!(),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => todo!(),
+            Stmt::Block(block) => self.evaluate_block_stmt(block)?,
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => todo!(),
+            Stmt::Print(expr) => todo!(),
+            Stmt::Return { keyword, value } => todo!(),
+            Stmt::Var { name, initializer } => self.evaluate_var_stmt(name, initializer)?,
+            Stmt::While { condition, body } => todo!(),
+        };
+        Ok(())
+    }
 
-#[derive(Clone, Debug)]
-struct RuntimeError {}
+    pub fn evaluate_block_stmt(&mut self, block: Block) -> Result<(), RuntimeError> {
+        // self.execute_block(block, )
+        todo!()
+    }
 
-pub struct Interpreter;
-impl Interpreter {
+    fn execute_block(&mut self, block: Block, env: Environments) -> Result<(), RuntimeError> {
+        todo!()
+    }
+
+    pub fn evaluate_var_stmt(
+        &mut self,
+        name: Token,
+        initializer: Option<Expr>,
+    ) -> Result<(), RuntimeError> {
+        let value = match initializer {
+            Some(expr) => self.evaluate_expr(&expr)?,
+            None => Value::Nil,
+        };
+
+        // self.env.define(name.lexeme.to_string(), value);
+        Ok(())
+    }
+
     pub fn evaluate_expr(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::Literal(literal) => Ok(match literal {
@@ -130,11 +173,19 @@ impl Interpreter {
     }
 
     fn evaluate_variable(&mut self, token: &Token) -> Result<Value, RuntimeError> {
-        todo!()
+        self.env.get(token.clone())
     }
 
     fn evaluate_assign(&mut self, name: &Token, value: &Expr) -> Result<Value, RuntimeError> {
-        todo!()
+        let value = self.evaluate_expr(value)?;
+        self.env.assign(name.lexeme.to_string(), value.clone());
+        Ok(value)
+    }
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -148,12 +199,10 @@ fn is_truthy(val: Value) -> Value {
 
 fn is_equal(left: Value, right: Value) -> Result<bool, RuntimeError> {
     match left {
-        Value::Bool(b1) => {
-            match right {
-                Value::Bool(b2) => Ok(b1 == b2),
-                _ => Err(RuntimeError {  })
-            }
+        Value::Bool(b1) => match right {
+            Value::Bool(b2) => Ok(b1 == b2),
+            _ => Err(RuntimeError {}),
         },
-        _ => Err(RuntimeError {  })
+        _ => Err(RuntimeError {}),
     }
 }
