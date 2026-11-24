@@ -1,3 +1,4 @@
+#[warn(elided_lifetimes_in_paths)]
 use std::env;
 use std::fs;
 
@@ -12,17 +13,12 @@ fn main() {
     };
 
     let source_string = fs::read_to_string(file_path).unwrap();
-    println!("{}", source_string);
+    println!("------------------------------\n{}\n-------------------------------", source_string);
 
-    let source = source_string.into_bytes();
-    let mut scanner = scanner::Scanner::new(&source);
+    let source = source_string.as_str();
+    let scanner = scanner::Scanner::new(&source);
 
-    loop {
-        let token = scanner.scan_token();
+    for token in scanner {
         println!("{}", token);
-
-        if token.token_type == scanner::TokenType::EOF {
-            break;
-        }
     }
 }

@@ -59,28 +59,27 @@ impl Display for TokenType {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Token {
+pub struct Token<'a> {
     pub token_type: TokenType,
-    start: usize,
-    length: i32,
+    pub lexeme: &'a str,
     line: i32,
 }
 
-impl Display for Token {
+impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
 pub struct Scanner<'a> {
-    source: &'a Vec<u8>,
+    source: &'a str,
     start: usize,
     current: usize,
     line: i32,
 }
 
 impl<'a> Scanner<'a> {
-    pub fn new(source: &'a Vec<u8>) -> Scanner<'a> {
+    pub fn new(source: &'a str) -> Scanner<'a> {
         Scanner {
             source: source,
             start: 0,
@@ -89,7 +88,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan_token(&mut self) -> Token {
+    pub fn scan_token(&mut self) -> Token<'a> {
         self.skip_whitespace();
         self.start = self.current;
 
@@ -130,16 +129,15 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn make_token(&mut self, token_type: TokenType) -> Token {
+    fn make_token(&mut self, token_type: TokenType) -> Token<'a> {
         Token {
             token_type,
-            start: self.start,
-            length: (self.current - self.start) as i32,
+            lexeme: &self.source[self.start..self.current],
             line: self.line,
         }
     }
 
-    fn string(&mut self) -> Token {
+    fn string(&mut self) -> Token<'a> {
         while self.peek() != '"' && !self.is_at_end() {
             if self.peek() == '\n' {
                 self.line += 1;
@@ -156,7 +154,7 @@ impl<'a> Scanner<'a> {
         return self.make_token(TokenType::String);
     }
 
-    fn number(&mut self) -> Token {
+    fn number(&mut self) -> Token<'a> {
         while is_ditig(self.peek()) {
             self.advance();
         }
@@ -172,7 +170,7 @@ impl<'a> Scanner<'a> {
         self.make_token(TokenType::Number)
     }
 
-    fn identifier(&mut self) -> Token {
+    fn identifier(&mut self) -> Token<'a> {
         while is_alpha(self.peek()) || is_ditig(self.peek()) {
             self.advance();
         }
@@ -182,66 +180,33 @@ impl<'a> Scanner<'a> {
     }
 
     fn identifier_type(&mut self) -> TokenType {
-        match self.source[self.start] as char {
-            'a' => self.check_keyword(1, 2, "nd", TokenType::And),
-            'c' => self.check_keyword(1, 4, "lass", TokenType::Class),
-            'e' => self.check_keyword(1, 3, "lse", TokenType::Else),
-            'f' => {
-                if self.current - self.start > 1 {
-                    return match self.source[self.start + 1] as char {
-                        'a' => self.check_keyword(2, 3, "lse", TokenType::False),
-                        'o' => self.check_keyword(2, 1, "r", TokenType::For),
-                        'u' => self.check_keyword(2, 1, "n", TokenType::Fun),
-                        _ => TokenType::Identifier,
-                    };
-                }
-                TokenType::Identifier
-            }
-            'i' => self.check_keyword(1, 1, "f", TokenType::If),
-            'n' => self.check_keyword(1, 2, "il", TokenType::Nil),
-            'o' => self.check_keyword(1, 1, "r", TokenType::Or),
-            'p' => self.check_keyword(1, 4, "rint", TokenType::Print),
-            'r' => self.check_keyword(1, 5, "eturn", TokenType::Return),
-            's' => self.check_keyword(1, 4, "uper", TokenType::Super),
-            't' => {
-                if self.current - self.start > 1 {
-                    return match self.source[self.start + 1] as char {
-                        'h' => self.check_keyword(2, 2, "is", TokenType::This),
-                        'r' => self.check_keyword(2, 2, "ue", TokenType::True),
-                        _ => TokenType::Identifier,
-                    };
-                }
-                TokenType::Identifier
-            }
-            'v' => self.check_keyword(1, 2, "ar", TokenType::Var),
-            'w' => self.check_keyword(1, 4, "hile", TokenType::While),
+        match &self.source[self.start..self.current] {
+            "and" => TokenType::And,
+            "class" => TokenType::Class,
+            "else" => TokenType::Else,
+            "false" => TokenType::False,
+            "for" => TokenType::For,
+            "fun" => TokenType::Fun,
+            "if" => TokenType::If,
+            "nil" => TokenType::Nil,
+            "or" => TokenType::Or,
+            "print" => TokenType::Print,
+            "return" => TokenType::Return,
+            "super" => TokenType::Super,
+            "this" => TokenType::This,
+            "true" => TokenType::True,
+            "var" => TokenType::Var,
+            "while" => TokenType::While,
             _ => TokenType::Identifier,
         }
     }
 
-    fn check_keyword(
-        &mut self,
-        start: usize,
-        length: usize,
-        rest: &'static str,
-        token_type: TokenType,
-    ) -> TokenType {
-        let src_start = self.start + start;
-        let src_end = src_start + length;
-        if self.current - self.start == start + length
-            && self.source[src_start..src_end] == *rest.as_bytes()
-        {
-            return token_type;
-        }
-        TokenType::Identifier
-    }
-
     fn advance(&mut self) -> char {
         self.current += 1;
-        return self.source[self.current - 1] as char;
+        return self.source.as_bytes()[self.current - 1] as char;
     }
 
-    fn match_next(&mut self, next_char: char, if_true: TokenType, if_false: TokenType) -> Token {
+    fn match_next(&mut self, next_char: char, if_true: TokenType, if_false: TokenType) -> Token<'a> {
         if self.is_at_end() || self.peek() != next_char {
             return self.make_token(if_false);
         }
@@ -250,14 +215,14 @@ impl<'a> Scanner<'a> {
     }
 
     fn peek(&self) -> char {
-        self.source[self.current] as char
+        self.source.as_bytes()[self.current] as char
     }
 
     fn peek_next(&self) -> char {
         if self.is_at_end() {
             return '\0';
         }
-        self.source[self.current + 1] as char
+        self.source.as_bytes()[self.current + 1] as char
     }
 
     fn is_at_end(&self) -> bool {
@@ -294,13 +259,24 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn error_token(&mut self, message: &'static str) -> Token {
-        println!("{}", message);
+    fn error_token(&mut self, message: &'static str) -> Token<'a> {
         Token {
             token_type: TokenType::Error,
-            start: 0,
-            length: message.len() as i32,
+            lexeme: message,
             line: self.line,
+        }
+    }
+}
+
+impl<'a> Iterator for Scanner<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let t = self.scan_token();
+        if t.token_type == TokenType::EOF {
+            None
+        } else {
+            Some(t)
         }
     }
 }
