@@ -62,7 +62,13 @@ impl Display for TokenType {
 pub struct Token<'a> {
     pub token_type: TokenType,
     pub lexeme: &'a str,
-    line: i32,
+    pub line: i32,
+}
+
+impl <'a> Token <'a> {
+    pub fn placeholder() -> Token<'a> {
+        Token { token_type: TokenType::EOF, lexeme: "", line: 0 }
+    }
 }
 
 impl<'a> Display for Token<'a> {

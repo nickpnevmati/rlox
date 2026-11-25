@@ -1,8 +1,16 @@
+#![feature(variant_count)]
 #[warn(elided_lifetimes_in_paths)]
 use std::env;
 use std::fs;
 
+use crate::vm::VM;
+
+mod chunk;
+mod compiler;
+mod debug;
 mod scanner;
+mod value;
+mod vm;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -13,12 +21,20 @@ fn main() {
     };
 
     let source_string = fs::read_to_string(file_path).unwrap();
-    println!("------------------------------\n{}\n-------------------------------", source_string);
+
+    #[cfg(feature = "debug_trace_execution")]
+    {
+        println!(
+            "------------------------------\n{}\n-------------------------------",
+            source_string
+        );
+    }
 
     let source = source_string.as_str();
-    let scanner = scanner::Scanner::new(&source);
-
-    for token in scanner {
-        println!("{}", token);
-    }
+    let chunk = match compiler::compile(source) {
+        Ok(chunk) => chunk,
+        Err(_) => std::process::exit(65),
+    };
+    let mut vm = VM::new(&chunk);
+    vm.run();
 }
