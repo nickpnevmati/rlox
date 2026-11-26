@@ -7,6 +7,17 @@ pub enum OpCode {
     OpConstant(u8),
     OpNegate,
     OpReturn,
+    OpAdd,
+    OpSub,
+    OpMul,
+    OpDiv,
+    OpNil,
+    OpTrue,
+    OpFalse,
+    OpNot,
+    OpEqual,
+    OpGreater,
+    OpLess,
 }
 
 impl Display for OpCode {
